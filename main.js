@@ -1,12 +1,16 @@
 import { Hands } from '@mediapipe/hands';
 import { Camera } from '@mediapipe/camera_utils';
 import { drawConnectors, drawLandmarks } from '@mediapipe/drawing_utils';
-import * as THREE from 'three';
 
 const videoElement = document.getElementById('video');
 const canvasElement = document.getElementById('overlay');
 const canvasCtx = canvasElement.getContext('2d');
 const statusElement = document.getElementById('status');
+
+function updateStatus(msg) {
+  console.log(msg);
+  statusElement.innerText = msg;
+}
 
 // Handle Window Resize
 function onResize() {
@@ -17,18 +21,21 @@ window.addEventListener('resize', onResize);
 onResize();
 
 function onResults(results) {
-  statusElement.innerText = results.multiHandLandmarks.length > 0 ? `Hands detected: ${results.multiHandLandmarks.length}` : 'Searching for hands...';
+  if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+    updateStatus(`Hands detected: ${results.multiHandLandmarks.length}`);
+  } else {
+    updateStatus('Searching for hands...');
+  }
   
   canvasCtx.save();
   canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
   
-  // Mirroring the canvas for selfie view
+  // Mirroring for selfie view
   canvasCtx.translate(canvasElement.width, 0);
   canvasCtx.scale(-1, 1);
 
   if (results.multiHandLandmarks) {
     for (const landmarks of results.multiHandLandmarks) {
-      // Draw Skeleton
       drawConnectors(canvasCtx, landmarks, [
         [0, 1], [1, 2], [2, 3], [3, 4],
         [0, 5], [5, 6], [6, 7], [7, 8],
@@ -40,7 +47,6 @@ function onResults(results) {
       
       drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 3});
 
-      // Special Highlight for Index Finger Tip (ID 8)
       const indexTip = landmarks[8];
       canvasCtx.fillStyle = '#FFFFFF';
       canvasCtx.beginPath();
@@ -50,6 +56,8 @@ function onResults(results) {
   }
   canvasCtx.restore();
 }
+
+updateStatus('Loading MediaPipe Hands...');
 
 const hands = new Hands({locateFile: (file) => {
   return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
@@ -64,6 +72,8 @@ hands.setOptions({
 
 hands.onResults(onResults);
 
+updateStatus('Starting Camera...');
+
 const camera = new Camera(videoElement, {
   onFrame: async () => {
     await hands.send({image: videoElement});
@@ -72,8 +82,9 @@ const camera = new Camera(videoElement, {
   height: 720
 });
 
-camera.start().then(() => {
-  statusElement.innerText = 'Camera started. Show your hands!';
-}).catch(err => {
-  statusElement.innerText = 'Camera Error: ' + err.message;
-});
+camera.start()
+  .then(() => updateStatus('Camera Active. Show your hands!'))
+  .catch(err => {
+    console.error(err);
+    updateStatus('Error: ' + err.message);
+  });
