@@ -106,10 +106,14 @@
         const tip = landmarks[8];
         const dip = landmarks[7];
 
-        const offsetRatio = 0.85;
+        // 暴力修正位置：既然差了一个半指甲盖，我们把 offsetRatio 和 manualYDown 组合重拳出击
+        // offsetRatio = 1.0 是关节，我们拉到 1.6 彻底压到指甲根部
+        const offsetRatio = 1.6;
         const nailCenterX = tip.x + (dip.x - tip.x) * offsetRatio;
         const nailCenterY = tip.y + (dip.y - tip.y) * offsetRatio;
-        const manualYDown = 0.02;
+        
+        // 强制 Y 轴下沉量也翻倍到 0.08
+        const manualYDown = 0.08;
 
         let x = (nailCenterX * 2 - 1);
         let y = -(nailCenterY * 2 - 1 + manualYDown);
