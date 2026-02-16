@@ -29,8 +29,8 @@
   <canvas id="overlay"></canvas>
 
   <!-- Load MediaPipe via standard script tags to bypass potential ESM import issues -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.4/camera_utils.js" crossorigin="anonymous"></script>
   
   <!-- Load Three.js via CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -41,7 +41,9 @@
       document.getElementById('status').innerText = msg;
     };
 
-    window.onerror = (e) => log('Runtime Error: ' + e);
+    window.onerror = (message, source, lineno, colno, error) => {
+      log(`Error: ${message} at ${lineno}:${colno}`);
+    };
 
     const videoElement = document.getElementById('video');
     const canvasElement = document.getElementById('overlay');
@@ -58,7 +60,7 @@
 
     const nail = new THREE.Mesh(
       new THREE.BoxGeometry(0.02, 0.04, 0.005),
-      new THREE.MeshBasicMaterial({ color: 0x00ff00 }) // 改成绿色验证生效
+      new THREE.MeshBasicMaterial({ color: 0x00ff00 }) 
     );
     nail.visible = false;
     scene.add(nail);
@@ -70,8 +72,6 @@
         const tip = landmarks[8];
         const dip = landmarks[7];
 
-        // --- COORDINATE MAPPING ---
-        // 我们把 offsetRatio 拉高到 1.5，这会把模型从指尖(8)拉到关节(7)之后更深的位置
         const offsetRatio = 1.5;
         const nailCenterX = tip.x + (dip.x - tip.x) * offsetRatio;
         const nailCenterY = tip.y + (dip.y - tip.y) * offsetRatio;
@@ -79,8 +79,6 @@
         let x = (nailCenterX * 2 - 1);
         let y = -(nailCenterY * 2 - 1);
 
-        // 统一镜像逻辑：
-        // 在目前的 HTML/CSS 结构下，如果模型方向反了，我们强制给 X 取反
         x = -x; 
 
         const actualAspect = canvasElement.clientWidth / canvasElement.clientHeight;
@@ -88,8 +86,6 @@
 
         const dx = tip.x - dip.x;
         const dy = tip.y - dip.y;
-        
-        // 旋转角度也根据 X 取反同步修正
         let angle = Math.atan2(dy, -dx);
         nail.rotation.z = -angle - Math.PI/2;
 
@@ -103,42 +99,43 @@
     }
 
     // --- MediaPipe Init ---
-    log('Initializing Hands...');
-    const hands = new window.Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
-    });
+    async function init() {
+        try {
+            log('Initializing Hands...');
+            const hands = new window.Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
+            });
 
-    hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 0,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-    hands.onResults(onResults);
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 0,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            hands.onResults(onResults);
 
-    async function startCamera() {
-      log('Starting Camera (' + facingMode + ')...');
-      if (camera) await camera.stop();
+            log('Starting Camera (' + facingMode + ')...');
+            camera = new window.Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                facingMode: facingMode,
+                width: 640,
+                height: 480
+            });
 
-      videoElement.style.transform = (facingMode === 'user') ? 'scaleX(-1)' : 'scaleX(1)';
-
-      camera = new window.Camera(videoElement, {
-        onFrame: async () => {
-          await hands.send({image: videoElement});
-        },
-        facingMode: facingMode,
-        width: 640,
-        height: 480
-      });
-
-      camera.start()
-        .then(() => log('Camera Live. Load AI...'))
-        .catch(err => log('Camera Error: ' + err));
+            await camera.start();
+            log('Camera Live. Load AI...');
+        } catch (err) {
+            log('Init Error: ' + err.message);
+        }
     }
 
-    flipBtn.addEventListener('click', () => {
+    flipBtn.addEventListener('click', async () => {
       facingMode = (facingMode === 'user') ? 'environment' : 'user';
-      startCamera();
+      videoElement.style.transform = (facingMode === 'user') ? 'scaleX(-1)' : 'scaleX(1)';
+      if (camera) await camera.stop();
+      await init();
     });
 
     window.addEventListener('resize', () => {
@@ -147,8 +144,7 @@
       threeCamera.updateProjectionMatrix();
     });
 
-    // Let scripts settle then start
-    setTimeout(startCamera, 1000);
+    setTimeout(init, 1000);
   </script>
 </body>
 </html>
