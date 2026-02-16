@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nailosophy Lens - AR Try-On</title>
+  <title>Nailosophy Lens - Pro AR</title>
   <style>
     body { margin: 0; overflow: hidden; background: #000; color: white; font-family: sans-serif; }
     canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; }
@@ -32,11 +32,11 @@
   <div id="status">Booting...</div>
   <div class="controls">
     <div>
-      <label>Nail Width</label>
+      <label>Width</label>
       <input type="range" id="widthScale" min="0.1" max="10.0" step="0.1" value="1.0">
     </div>
     <div>
-      <label>Nail Length</label>
+      <label>Length</label>
       <input type="range" id="lengthScale" min="0.1" max="10.0" step="0.1" value="1.0">
     </div>
   </div>
@@ -81,24 +81,23 @@
     const nailGroup = new THREE.Group();
     scene.add(nailGroup);
 
-    // 默认保底方块 (绿色)
-    const fallbackMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.02, 0.04, 0.01),
-      new THREE.MeshStandardMaterial({ color: 0x00ff00 })
-    );
-    nailGroup.add(fallbackMesh);
-
     const loader = new THREE.GLTFLoader();
-    // 使用相对路径尝试加载本地推送的模型
     loader.load('./nail.glb', (gltf) => {
-      log('GLB Loaded Successfully');
-      nailGroup.clear(); // 移除绿色方块
+      log('GLB Loaded');
+      nailGroup.clear();
       const model = gltf.scene;
       model.rotation.set(0, 0, 0); 
       nailGroup.add(model);
     }, undefined, (e) => {
-      log('GLB Load Failed, using Green Box. Error: ' + e.message);
+      log('GLB Failed. Error: ' + e.message);
+      // Fallback green box
+      nailGroup.add(new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.04, 0.01), new THREE.MeshStandardMaterial({ color: 0x00ff00 })));
     });
+
+    // SMOOTHING STATE
+    let targetPos = new THREE.Vector3();
+    let currentPos = new THREE.Vector3();
+    const lerpFactor = 0.35; // 越大越跟手，越小越平滑
 
     function onResults(results) {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
@@ -106,40 +105,45 @@
         const tip = landmarks[8];
         const dip = landmarks[7];
 
-        // 寻找平衡点：尝试用户建议的 1.0，并微调强制下沉量
-        const offsetRatio = 1.0;
-        const nailCenterX = tip.x + (dip.x - tip.x) * offsetRatio;
-        const nailCenterY = tip.y + (dip.y - tip.y) * offsetRatio;
+        // --- NEW TRACKING LOGIC ---
+        // 1. Calculate center point between joint and tip
+        const nailX = (tip.x + dip.x) / 2;
+        const nailY = (tip.y + dip.y) / 2;
+
+        // 2. Convert to Normalized Device Coordinates (-1 to +1)
+        let ndcX = (nailX * 2 - 1);
+        let ndcY = -(nailY * 2 - 1);
+        if (facingMode === 'user') ndcX = -ndcX;
+
+        // 3. Unproject: Transform screen position to 3D world space
+        // This is much more accurate than simple aspect multiplication
+        const tempVector = new THREE.Vector3(ndcX, ndcY, 0.5);
+        tempVector.unproject(threeCamera);
+        const dir = tempVector.sub(threeCamera.position).normalize();
         
-        // 强制 Y 轴下沉量设定为 0.04 (取 0.02 和 0.08 的中间值)
-        const manualYDown = 0.04;
+        // Use MediaPipe's Z to estimate world distance
+        // tip.z is normalized depth from camera, usually very small negative
+        const worldDistance = 1.0 + (tip.z * 2.0); 
+        targetPos = threeCamera.position.clone().add(dir.multiplyScalar(worldDistance));
 
-        let x = (nailCenterX * 2 - 1);
-        let y = -(nailCenterY * 2 - 1 + manualYDown);
-        if (facingMode === 'user') x = -x; 
+        // 4. Smooth movement (LERP)
+        nailGroup.position.lerp(targetPos, lerpFactor);
 
-        const actualAspect = canvasElement.clientWidth / canvasElement.clientHeight;
-        nailGroup.position.set(x * actualAspect, y, -0.5); // 稍微靠近镜头一点点
-
+        // 5. Rotation (Lock to Finger Vector)
         const dx = tip.x - dip.x;
         const dy = tip.y - dip.y;
         let angle = Math.atan2(dy, (facingMode === 'user') ? -dx : dx);
         nailGroup.rotation.z = -angle - Math.PI/2;
 
+        // 6. Scale
         const handSize = Math.sqrt(Math.pow(landmarks[0].x - landmarks[9].x, 2) + Math.pow(landmarks[0].y - landmarks[9].y, 2));
         const userWidth = parseFloat(widthSlider.value);
         const userLength = parseFloat(lengthSlider.value);
+        const baseScale = handSize * 0.45; 
+        nailGroup.scale.set(baseScale * userWidth, baseScale * userLength, baseScale * userWidth);
 
-        // 调整 baseScale 逻辑，增大初始值
-        const baseScale = handSize * 0.5; 
-        nailGroup.scale.set(
-            baseScale * userWidth, 
-            baseScale * userLength, 
-            baseScale * userWidth
-        );
-
-        log(`Scale: ${baseScale.toFixed(3)} | Hands: 1`);
         nailGroup.visible = true;
+        log('Hands: 1 | Smooth: ON');
       } else {
         nailGroup.visible = false;
         log('Hands: 0');
@@ -173,7 +177,7 @@
                 height: 480
             });
             await cameraInstance.start();
-            log('AR Active.');
+            log('AR Ready.');
         } catch (err) {
             log('Init Error: ' + err.message);
         }
