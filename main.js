@@ -2,9 +2,15 @@ import { Hands } from '@mediapipe/hands';
 import { Camera } from '@mediapipe/camera_utils';
 import * as THREE from 'three';
 
+// Debug logging
+const log = (msg) => {
+  console.log(`[Nailosophy] ${msg}`);
+  const status = document.getElementById('status');
+  if (status) status.innerText = msg;
+};
+
 const videoElement = document.getElementById('video');
 const canvasElement = document.getElementById('overlay');
-const statusElement = document.getElementById('status');
 const flipBtn = document.getElementById('flip-camera');
 
 let facingMode = 'user';
@@ -16,107 +22,104 @@ const threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.i
 const renderer = new THREE.WebGLRenderer({
   canvas: canvasElement,
   alpha: true,
-  antialias: true
+  antialias: false // Performance boost
 });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
 
-// Placeholder Nail: A simple red capsule-like box
-const nailGeometry = new THREE.BoxGeometry(0.02, 0.04, 0.005); // Width, Height (Length), Thickness
-const nailMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000, metalness: 0.5, roughness: 0.2 });
+const nailGeometry = new THREE.BoxGeometry(0.02, 0.04, 0.005);
+const nailMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // 改为绿色，测试缓存是否更新
 const nailMesh = new THREE.Mesh(nailGeometry, nailMaterial);
 nailMesh.visible = false;
 scene.add(nailMesh);
 
-// Lighting
-const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
-scene.add(ambientLight);
-const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-directionalLight.position.set(0, 1, 1);
-scene.add(directionalLight);
-
-function updateStatus(msg) {
-  statusElement.innerText = msg;
-}
-
-function onResize() {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  renderer.setSize(width, height);
-  threeCamera.aspect = width / height;
-  threeCamera.updateProjectionMatrix();
-}
-window.addEventListener('resize', onResize);
-
 function onResults(results) {
   if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-    updateStatus(`AR Active - Tracking Hand`);
+    log('AR Active');
     const landmarks = results.multiHandLandmarks[0];
-    
-    // Landmark 8: Index Tip, Landmark 7: Index DIP (joint below tip)
-    const tip = landmarks[8];
-    const dip = landmarks[7];
+    const tip = landmarks[8]; // 指尖
+    const dip = landmarks[7]; // 第一关节
 
-    // Convert MediaPipe (0 to 1) to Three.js Screen Space (-1 to 1)
-    // MediaPipe x is 0(left) to 1(right). In selfie mode, we might need to flip.
-    let x = (tip.x * 2 - 1);
-    let y = -(tip.y * 2 - 1);
-    
-    // Flip X if using front camera (selfie)
+    // 1. 先计算基础的 2D 映射位置
+    let x2d = (tip.x * 2 - 1);
+    let y2d = -(tip.y * 2 - 1);
+
     if (facingMode === 'user') {
-       x = -x;
-       videoElement.style.transform = 'scaleX(-1)';
-    } else {
-       videoElement.style.transform = 'scaleX(1)';
+        x2d = -x2d; 
     }
 
-    // Position the nail at the tip
-    // Note: Z is tricky, using a fixed plane for now in this sprint
-    nailMesh.position.set(x * (threeCamera.aspect), y, -1); 
+    const aspect = window.innerWidth / window.innerHeight;
     
-    // Rotation Logic: Point from DIP to TIP
+    // 2. 直接在 3D 空间进行暴力偏移
+    // 之前我们是在 2D 坐标里算，容易被投影矩阵搞晕
+    // 现在：
+    // - Y轴下移：减去 0.15 (Three.js 坐标系下移)
+    // - X轴根据 dx/dy 稍微修正
+    const yOffset = -0.15; 
+    
+    nailMesh.position.set(x2d * aspect, y2d + yOffset, -1); 
+
     const dx = tip.x - dip.x;
     const dy = tip.y - dip.y;
-    const angle = Math.atan2(dy, dx);
+    let angle = Math.atan2(dy, -dx);
     nailMesh.rotation.z = -angle - Math.PI/2;
 
-    // Scale Logic: Simple heuristic based on hand distance (distance between landmark 0 and 9)
     const handSize = Math.sqrt(Math.pow(landmarks[0].x - landmarks[9].x, 2) + Math.pow(landmarks[0].y - landmarks[9].y, 2));
-    const scaleFactor = handSize * 1.5;
-    nailMesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
-
+    nailMesh.scale.setScalar(handSize * 1.8);
     nailMesh.visible = true;
   } else {
-    updateStatus('Searching for hand...');
     nailMesh.visible = false;
   }
-  
   renderer.render(scene, threeCamera);
 }
 
-const hands = new Hands({locateFile: (file) => {
-  return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-}});
+// MediaPipe Setup with robust error handling
+let hands;
+try {
+  log('Initializing MediaPipe...');
+  hands = new Hands({
+    locateFile: (file) => {
+      const url = `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`;
+      console.log(`[Nailosophy] Fetching: ${url}`);
+      return url;
+    }
+  });
 
-hands.setOptions({
-  maxNumHands: 1,
-  modelComplexity: 1,
-  minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5
-});
-hands.onResults(onResults);
+  hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 0,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+  });
+  hands.onResults(onResults);
+  log('MediaPipe Ready');
+} catch (e) {
+  log('MediaPipe Init Error: ' + e.message);
+}
 
 async function startCamera() {
-  if (camera) await camera.stop();
-  camera = new Camera(videoElement, {
-    onFrame: async () => {
-      await hands.send({image: videoElement});
-    },
-    facingMode: facingMode,
-    width: 1280,
-    height: 720
-  });
-  camera.start().catch(err => updateStatus('Error: ' + err.message));
+  log('Requesting Camera...');
+  if (camera) {
+    try { await camera.stop(); } catch(e) {}
+  }
+
+  videoElement.style.transform = (facingMode === 'user') ? 'scaleX(-1)' : 'scaleX(1)';
+
+  try {
+    camera = new Camera(videoElement, {
+      onFrame: async () => {
+        if (hands) await hands.send({image: videoElement});
+      },
+      facingMode: facingMode,
+      width: 640,
+      height: 480
+    });
+
+    await camera.start();
+    log('Camera Active. Detecting...');
+  } catch (err) {
+    log('Camera Error: ' + err.message);
+    console.error(err);
+  }
 }
 
 flipBtn.addEventListener('click', () => {
@@ -124,4 +127,5 @@ flipBtn.addEventListener('click', () => {
   startCamera();
 });
 
+// Start initialization
 startCamera();

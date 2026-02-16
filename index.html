@@ -5,18 +5,150 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Nailosophy Lens - Debug</title>
   <style>
-    body { margin: 0; overflow: hidden; background: #000; }
-    canvas { position: absolute; top: 0; left: 0; }
-    #video { transform: scaleX(-1); width: 100vw; height: 100vh; object-fit: cover; }
-    #overlay { pointer-events: none; width: 100vw; height: 100vh; }
-    #status { position: absolute; top: 10px; left: 10px; color: #0f0; font-family: monospace; z-index: 10; background: rgba(0,0,0,0.5); padding: 5px; }
+    body { margin: 0; overflow: hidden; background: #000; color: white; font-family: sans-serif; }
+    canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; }
+    video { width: 100vw; height: 100vh; object-fit: cover; }
+    #status { 
+      position: absolute; top: 20px; left: 20px; 
+      background: rgba(0,0,0,0.8); padding: 10px; border-radius: 8px;
+      z-index: 100; font-size: 14px; border: 1px solid #444;
+      max-width: 80%; word-break: break-all;
+    }
+    #flip-camera {
+      position: absolute; bottom: 30px; right: 30px; 
+      z-index: 100; padding: 15px; background: white; 
+      border-radius: 50%; border: none; font-size: 24px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    }
   </style>
 </head>
 <body>
-  <div id="status">Initializing...</div>
-  <button id="flip-camera" style="position: absolute; bottom: 20px; right: 20px; z-index: 20; padding: 15px; background: rgba(255,255,255,0.8); border-radius: 50%; border: none; font-size: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);">🔄</button>
+  <div id="status">Wait... Booting scripts...</div>
+  <button id="flip-camera">🔄</button>
   <video id="video" playsinline></video>
   <canvas id="overlay"></canvas>
-  <script type="module" src="/main.js"></script>
+
+  <!-- Load MediaPipe via standard script tags to bypass potential ESM import issues -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  
+  <!-- Load Three.js via CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <script>
+    const log = (msg) => {
+      console.log(msg);
+      document.getElementById('status').innerText = msg;
+    };
+
+    window.onerror = (e) => log('Runtime Error: ' + e);
+
+    const videoElement = document.getElementById('video');
+    const canvasElement = document.getElementById('overlay');
+    const flipBtn = document.getElementById('flip-camera');
+
+    let facingMode = 'user';
+    let camera = null;
+
+    // --- Three.js ---
+    const scene = new THREE.Scene();
+    const threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ canvas: canvasElement, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    const nail = new THREE.Mesh(
+      new THREE.BoxGeometry(0.02, 0.04, 0.005),
+      new THREE.MeshBasicMaterial({ color: 0x00ff00 }) // 改成绿色验证生效
+    );
+    nail.visible = false;
+    scene.add(nail);
+
+    function onResults(results) {
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        log('AR Active');
+        const landmarks = results.multiHandLandmarks[0];
+        const tip = landmarks[8];
+        const dip = landmarks[7];
+
+        // --- COORDINATE MAPPING ---
+        // 我们把 offsetRatio 拉高到 1.5，这会把模型从指尖(8)拉到关节(7)之后更深的位置
+        const offsetRatio = 1.5;
+        const nailCenterX = tip.x + (dip.x - tip.x) * offsetRatio;
+        const nailCenterY = tip.y + (dip.y - tip.y) * offsetRatio;
+
+        let x = (nailCenterX * 2 - 1);
+        let y = -(nailCenterY * 2 - 1);
+
+        // 统一镜像逻辑：
+        // 在目前的 HTML/CSS 结构下，如果模型方向反了，我们强制给 X 取反
+        x = -x; 
+
+        const actualAspect = canvasElement.clientWidth / canvasElement.clientHeight;
+        nail.position.set(x * actualAspect, y, -1.1); 
+
+        const dx = tip.x - dip.x;
+        const dy = tip.y - dip.y;
+        
+        // 旋转角度也根据 X 取反同步修正
+        let angle = Math.atan2(dy, -dx);
+        nail.rotation.z = -angle - Math.PI/2;
+
+        const handSize = Math.sqrt(Math.pow(landmarks[0].x - landmarks[9].x, 2) + Math.pow(landmarks[0].y - landmarks[9].y, 2));
+        nail.scale.setScalar(handSize * 2);
+        nail.visible = true;
+      } else {
+        nail.visible = false;
+      }
+      renderer.render(scene, threeCamera);
+    }
+
+    // --- MediaPipe Init ---
+    log('Initializing Hands...');
+    const hands = new window.Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 0,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    hands.onResults(onResults);
+
+    async function startCamera() {
+      log('Starting Camera (' + facingMode + ')...');
+      if (camera) await camera.stop();
+
+      videoElement.style.transform = (facingMode === 'user') ? 'scaleX(-1)' : 'scaleX(1)';
+
+      camera = new window.Camera(videoElement, {
+        onFrame: async () => {
+          await hands.send({image: videoElement});
+        },
+        facingMode: facingMode,
+        width: 640,
+        height: 480
+      });
+
+      camera.start()
+        .then(() => log('Camera Live. Load AI...'))
+        .catch(err => log('Camera Error: ' + err));
+    }
+
+    flipBtn.addEventListener('click', () => {
+      facingMode = (facingMode === 'user') ? 'environment' : 'user';
+      startCamera();
+    });
+
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      threeCamera.aspect = window.innerWidth / window.innerHeight;
+      threeCamera.updateProjectionMatrix();
+    });
+
+    // Let scripts settle then start
+    setTimeout(startCamera, 1000);
+  </script>
 </body>
 </html>
