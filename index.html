@@ -63,27 +63,40 @@
     scene.add(nail);
 
     function onResults(results) {
+      // 增加调试日志
+      if (results.multiHandLandmarks) {
+          log(`Hands: ${results.multiHandLandmarks.length}`);
+      }
+
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        log('AR Active');
         const landmarks = results.multiHandLandmarks[0];
         const tip = landmarks[8];
         const dip = landmarks[7];
 
-        const offsetRatio = 1.5;
+        // 此时我们先不用暴力偏移，先看看最原始的位置是否正常
+        // 降低 offsetRatio 到 0.5，看看它是否出现在指尖和关节之间
+        const offsetRatio = 0.5;
         const nailCenterX = tip.x + (dip.x - tip.x) * offsetRatio;
         const nailCenterY = tip.y + (dip.y - tip.y) * offsetRatio;
 
         let x = (nailCenterX * 2 - 1);
         let y = -(nailCenterY * 2 - 1);
 
-        x = -x; 
+        // 如果你是自拍模式，x 翻转通常是必须的
+        if (facingMode === 'user') {
+            x = -x; 
+        }
 
         const actualAspect = canvasElement.clientWidth / canvasElement.clientHeight;
-        nail.position.set(x * actualAspect, y, -1.1); 
+        // 深度 Z 稍微往后挪一点，确保在相机近剪裁面内
+        nail.position.set(x * actualAspect, y, -1.0); 
 
         const dx = tip.x - dip.x;
         const dy = tip.y - dip.y;
-        let angle = Math.atan2(dy, -dx);
+        let angle = Math.atan2(dy, dx);
+        // 如果是自拍模式，角度可能也需要微调
+        if (facingMode === 'user') angle = Math.atan2(dy, -dx);
+        
         nail.rotation.z = -angle - Math.PI/2;
 
         const handSize = Math.sqrt(Math.pow(landmarks[0].x - landmarks[9].x, 2) + Math.pow(landmarks[0].y - landmarks[9].y, 2));
