@@ -11,7 +11,7 @@
     #status { 
       position: absolute; top: 20px; left: 20px; 
       background: rgba(0,0,0,0.8); padding: 10px; border-radius: 8px;
-      z-index: 100; font-size: 12px; border: 1px solid #444;
+      z-index: 100; font-size: 11px; border: 1px solid #444;
       max-width: 80%; word-break: break-all;
     }
     .controls {
@@ -33,11 +33,11 @@
   <div class="controls">
     <div>
       <label>Nail Width</label>
-      <input type="range" id="widthScale" min="0.1" max="5.0" step="0.1" value="1.5">
+      <input type="range" id="widthScale" min="0.1" max="10.0" step="0.1" value="1.0">
     </div>
     <div>
       <label>Nail Length</label>
-      <input type="range" id="lengthScale" min="0.1" max="5.0" step="0.1" value="1.5">
+      <input type="range" id="lengthScale" min="0.1" max="10.0" step="0.1" value="1.0">
     </div>
   </div>
   <button id="flip-camera">🔄</button>
@@ -67,28 +67,37 @@
     let cameraInstance = null;
     let handsInstance = null;
 
+    // --- Three.js ---
     const scene = new THREE.Scene();
-    const threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 1000);
     const renderer = new THREE.WebGLRenderer({ canvas: canvasElement, alpha: true, antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-    scene.add(ambientLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
     dirLight.position.set(0, 5, 5);
     scene.add(dirLight);
 
-    let nailModel = null;
     const nailGroup = new THREE.Group();
     scene.add(nailGroup);
 
+    // 默认保底方块 (绿色)
+    const fallbackMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.02, 0.04, 0.01),
+      new THREE.MeshStandardMaterial({ color: 0x00ff00 })
+    );
+    nailGroup.add(fallbackMesh);
+
     const loader = new THREE.GLTFLoader();
-    loader.load('https://raw.githubusercontent.com/vazgriz/SimpleNails/master/Assets/Models/Nail.glb', (gltf) => {
-      nailModel = gltf.scene;
-      nailModel.rotation.set(0, 0, 0); 
-      nailGroup.clear();
-      nailGroup.add(nailModel);
-      log('Nail Model Loaded');
+    // 使用相对路径尝试加载本地推送的模型
+    loader.load('./nail.glb', (gltf) => {
+      log('GLB Loaded Successfully');
+      nailGroup.clear(); // 移除绿色方块
+      const model = gltf.scene;
+      model.rotation.set(0, 0, 0); 
+      nailGroup.add(model);
+    }, undefined, (e) => {
+      log('GLB Load Failed, using Green Box. Error: ' + e.message);
     });
 
     function onResults(results) {
@@ -107,29 +116,30 @@
         if (facingMode === 'user') x = -x; 
 
         const actualAspect = canvasElement.clientWidth / canvasElement.clientHeight;
-        nailGroup.position.set(x * actualAspect, y, -1.0); 
+        nailGroup.position.set(x * actualAspect, y, -0.5); // 稍微靠近镜头一点点
 
         const dx = tip.x - dip.x;
         const dy = tip.y - dip.y;
         let angle = Math.atan2(dy, (facingMode === 'user') ? -dx : dx);
         nailGroup.rotation.z = -angle - Math.PI/2;
 
-        // --- FITTING LOGIC ---
         const handSize = Math.sqrt(Math.pow(landmarks[0].x - landmarks[9].x, 2) + Math.pow(landmarks[0].y - landmarks[9].y, 2));
         const userWidth = parseFloat(widthSlider.value);
         const userLength = parseFloat(lengthSlider.value);
 
-        // 基础缩放系数根据模型实际比例微调
-        const baseScale = handSize * 0.015; 
+        // 调整 baseScale 逻辑，增大初始值
+        const baseScale = handSize * 0.5; 
         nailGroup.scale.set(
             baseScale * userWidth, 
             baseScale * userLength, 
             baseScale * userWidth
         );
 
+        log(`Scale: ${baseScale.toFixed(3)} | Hands: 1`);
         nailGroup.visible = true;
       } else {
         nailGroup.visible = false;
+        log('Hands: 0');
       }
       renderer.render(scene, threeCamera);
     }
@@ -141,7 +151,6 @@
             handsInstance = new HandsClass({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
-
             handsInstance.setOptions({
                 maxNumHands: 1,
                 modelComplexity: 0,
@@ -161,7 +170,7 @@
                 height: 480
             });
             await cameraInstance.start();
-            log('AR Ready.');
+            log('AR Active.');
         } catch (err) {
             log('Init Error: ' + err.message);
         }
