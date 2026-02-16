@@ -67,11 +67,26 @@
     let nailModel = null;
     const loader = new THREE.GLTFLoader();
 
-    // 加载一个临时的高质量甲片占位模型（如果路径无效会回退到几何体）
     const nailGroup = new THREE.Group();
     scene.add(nailGroup);
 
-    // 创建一个看起来更像甲片的“精致占位符”
+    // 加载真实的开源美甲模型
+    loader.load('https://raw.githubusercontent.com/vazgriz/SimpleNails/master/Assets/Models/Nail.glb', (gltf) => {
+      nailModel = gltf.scene;
+      
+      // 调整模型原始姿态，确保它能对齐手指
+      nailModel.rotation.set(0, 0, 0); 
+      nailModel.scale.setScalar(0.01); // 模型可能很大，缩小它
+      
+      // 移除占位符
+      nailGroup.clear();
+      nailGroup.add(nailModel);
+      log('Real Model Loaded');
+    }, undefined, (error) => {
+        log('Model Load Error: ' + error);
+    });
+
+    // 初始保留一个精致占位符，直到真实模型加载完成
     const placeholderGeometry = new THREE.CylinderGeometry(0.012, 0.01, 0.04, 32);
     const placeholderMaterial = new THREE.MeshPhongMaterial({ 
         color: 0xff69b4, 
