@@ -11,7 +11,7 @@
     #status { 
       position: absolute; top: 20px; left: 20px; 
       background: rgba(0,0,0,0.8); padding: 10px; border-radius: 8px;
-      z-index: 100; font-size: 14px; border: 1px solid #444;
+      z-index: 100; font-size: 12px; border: 1px solid #444;
       max-width: 80%; word-break: break-all;
     }
     #flip-camera {
@@ -23,16 +23,14 @@
   </style>
 </head>
 <body>
-  <div id="status">Wait... Booting scripts...</div>
+  <div id="status">Booting...</div>
   <button id="flip-camera">🔄</button>
   <video id="video" playsinline></video>
   <canvas id="overlay"></canvas>
 
-  <!-- Load MediaPipe via standard script tags to bypass potential ESM import issues -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.4/camera_utils.js" crossorigin="anonymous"></script>
-  
-  <!-- Load Three.js via CDN -->
+  <!-- Load MediaPipe standard scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
   <script>
@@ -41,16 +39,15 @@
       document.getElementById('status').innerText = msg;
     };
 
-    window.onerror = (message, source, lineno, colno, error) => {
-      log(`Error: ${message} at ${lineno}:${colno}`);
-    };
+    window.onerror = (m, s, l, c, e) => log(`Err: ${m} @ ${l}`);
 
     const videoElement = document.getElementById('video');
     const canvasElement = document.getElementById('overlay');
     const flipBtn = document.getElementById('flip-camera');
 
     let facingMode = 'user';
-    let camera = null;
+    let cameraInstance = null;
+    let handsInstance = null;
 
     // --- Three.js ---
     const scene = new THREE.Scene();
@@ -98,34 +95,43 @@
       renderer.render(scene, threeCamera);
     }
 
-    // --- MediaPipe Init ---
     async function init() {
         try {
             log('Initializing Hands...');
-            const hands = new window.Hands({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
+            // In some environments, global Hands is just 'Hands'
+            const HandsClass = window.Hands || window.mpHands.Hands;
+            handsInstance = new HandsClass({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
 
-            hands.setOptions({
+            handsInstance.setOptions({
                 maxNumHands: 1,
                 modelComplexity: 0,
                 minDetectionConfidence: 0.5,
                 minTrackingConfidence: 0.5
             });
-            hands.onResults(onResults);
+            handsInstance.onResults(onResults);
 
-            log('Starting Camera (' + facingMode + ')...');
-            camera = new window.Camera(videoElement, {
+            log('Starting Camera...');
+            // In some environments, global Camera is just 'Camera' or 'mpCamera.Camera'
+            const CameraClass = window.Camera || (window.mpCamera && window.mpCamera.Camera);
+            
+            if (!CameraClass) {
+                log('Fatal: Camera class not found. Check network.');
+                return;
+            }
+
+            cameraInstance = new CameraClass(videoElement, {
                 onFrame: async () => {
-                    await hands.send({image: videoElement});
+                    if (handsInstance) await handsInstance.send({image: videoElement});
                 },
                 facingMode: facingMode,
                 width: 640,
                 height: 480
             });
 
-            await camera.start();
-            log('Camera Live. Load AI...');
+            await cameraInstance.start();
+            log('Camera Live. Detecting...');
         } catch (err) {
             log('Init Error: ' + err.message);
         }
@@ -134,7 +140,7 @@
     flipBtn.addEventListener('click', async () => {
       facingMode = (facingMode === 'user') ? 'environment' : 'user';
       videoElement.style.transform = (facingMode === 'user') ? 'scaleX(-1)' : 'scaleX(1)';
-      if (camera) await camera.stop();
+      if (cameraInstance) await cameraInstance.stop();
       await init();
     });
 
@@ -144,7 +150,8 @@
       threeCamera.updateProjectionMatrix();
     });
 
-    setTimeout(init, 1000);
+    // Start
+    init();
   </script>
 </body>
 </html>
