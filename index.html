@@ -28,7 +28,6 @@
   <video id="video" playsinline></video>
   <canvas id="overlay"></canvas>
 
-  <!-- Load MediaPipe standard scripts -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -45,11 +44,11 @@
     const canvasElement = document.getElementById('overlay');
     const flipBtn = document.getElementById('flip-camera');
 
-    let facingMode = 'user';
+    // --- DEFAULT TO BACK CAMERA ---
+    let facingMode = 'environment';
     let cameraInstance = null;
     let handsInstance = null;
 
-    // --- Three.js ---
     const scene = new THREE.Scene();
     const threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     const renderer = new THREE.WebGLRenderer({ canvas: canvasElement, alpha: true });
@@ -63,7 +62,6 @@
     scene.add(nail);
 
     function onResults(results) {
-      // 增加调试日志
       if (results.multiHandLandmarks) {
           log(`Hands: ${results.multiHandLandmarks.length}`);
       }
@@ -73,8 +71,7 @@
         const tip = landmarks[8];
         const dip = landmarks[7];
 
-        // 此时我们先不用暴力偏移，先看看最原始的位置是否正常
-        // 降低 offsetRatio 到 0.5，看看它是否出现在指尖和关节之间
+        // 默认后置模式下，offsetRatio = 0.5 落在指甲中间
         const offsetRatio = 0.5;
         const nailCenterX = tip.x + (dip.x - tip.x) * offsetRatio;
         const nailCenterY = tip.y + (dip.y - tip.y) * offsetRatio;
@@ -82,21 +79,18 @@
         let x = (nailCenterX * 2 - 1);
         let y = -(nailCenterY * 2 - 1);
 
-        // 如果你是自拍模式，x 翻转通常是必须的
+        // 如果是前置才翻转，后置保持原样
         if (facingMode === 'user') {
             x = -x; 
         }
 
         const actualAspect = canvasElement.clientWidth / canvasElement.clientHeight;
-        // 深度 Z 稍微往后挪一点，确保在相机近剪裁面内
         nail.position.set(x * actualAspect, y, -1.0); 
 
         const dx = tip.x - dip.x;
         const dy = tip.y - dip.y;
-        let angle = Math.atan2(dy, dx);
-        // 如果是自拍模式，角度可能也需要微调
-        if (facingMode === 'user') angle = Math.atan2(dy, -dx);
         
+        let angle = Math.atan2(dy, (facingMode === 'user') ? -dx : dx);
         nail.rotation.z = -angle - Math.PI/2;
 
         const handSize = Math.sqrt(Math.pow(landmarks[0].x - landmarks[9].x, 2) + Math.pow(landmarks[0].y - landmarks[9].y, 2));
@@ -111,8 +105,7 @@
     async function init() {
         try {
             log('Initializing Hands...');
-            // In some environments, global Hands is just 'Hands'
-            const HandsClass = window.Hands || window.mpHands.Hands;
+            const HandsClass = window.Hands || (window.mpHands && window.mpHands.Hands);
             handsInstance = new HandsClass({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
             });
@@ -125,15 +118,9 @@
             });
             handsInstance.onResults(onResults);
 
-            log('Starting Camera...');
-            // In some environments, global Camera is just 'Camera' or 'mpCamera.Camera'
+            log('Starting Back Camera...');
             const CameraClass = window.Camera || (window.mpCamera && window.mpCamera.Camera);
             
-            if (!CameraClass) {
-                log('Fatal: Camera class not found. Check network.');
-                return;
-            }
-
             cameraInstance = new CameraClass(videoElement, {
                 onFrame: async () => {
                     if (handsInstance) await handsInstance.send({image: videoElement});
@@ -144,7 +131,7 @@
             });
 
             await cameraInstance.start();
-            log('Camera Live. Detecting...');
+            log('Back Camera Active.');
         } catch (err) {
             log('Init Error: ' + err.message);
         }
@@ -163,7 +150,6 @@
       threeCamera.updateProjectionMatrix();
     });
 
-    // Start
     init();
   </script>
 </body>
