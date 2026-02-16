@@ -14,24 +14,38 @@
       z-index: 100; font-size: 12px; border: 1px solid #444;
       max-width: 80%; word-break: break-all;
     }
+    .controls {
+      position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
+      z-index: 100; background: rgba(0,0,0,0.6); padding: 15px; border-radius: 15px;
+      display: flex; flex-direction: column; gap: 10px; width: 70%;
+    }
+    .controls label { font-size: 12px; margin-bottom: 5px; display: block; }
+    .controls input { width: 100%; }
     #flip-camera {
-      position: absolute; bottom: 30px; right: 30px; 
+      position: absolute; bottom: 20px; right: 20px; 
       z-index: 100; padding: 15px; background: white; 
       border-radius: 50%; border: none; font-size: 24px;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
     }
   </style>
 </head>
 <body>
   <div id="status">Booting...</div>
+  <div class="controls">
+    <div>
+      <label>Nail Width</label>
+      <input type="range" id="widthScale" min="0.1" max="5.0" step="0.1" value="1.5">
+    </div>
+    <div>
+      <label>Nail Length</label>
+      <input type="range" id="lengthScale" min="0.1" max="5.0" step="0.1" value="1.5">
+    </div>
+  </div>
   <button id="flip-camera">🔄</button>
   <video id="video" playsinline></video>
   <canvas id="overlay"></canvas>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  
-  <!-- Load Three.js + GLTFLoader -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
@@ -41,23 +55,23 @@
       document.getElementById('status').innerText = msg;
     };
 
-    window.onerror = (m, s, l, c, e) => log(`Err: ${m} @ ${l}`);
+    window.onerror = (m, l) => log(`Err: ${m} @ ${l}`);
 
     const videoElement = document.getElementById('video');
     const canvasElement = document.getElementById('overlay');
     const flipBtn = document.getElementById('flip-camera');
+    const widthSlider = document.getElementById('widthScale');
+    const lengthSlider = document.getElementById('lengthScale');
 
     let facingMode = 'environment';
     let cameraInstance = null;
     let handsInstance = null;
 
-    // --- Three.js Setup ---
     const scene = new THREE.Scene();
     const threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     const renderer = new THREE.WebGLRenderer({ canvas: canvasElement, alpha: true, antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
 
-    // Add Lights for 3D Models
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
     scene.add(ambientLight);
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
@@ -65,44 +79,19 @@
     scene.add(dirLight);
 
     let nailModel = null;
-    const loader = new THREE.GLTFLoader();
-
     const nailGroup = new THREE.Group();
     scene.add(nailGroup);
 
-    // 加载真实的开源美甲模型
+    const loader = new THREE.GLTFLoader();
     loader.load('https://raw.githubusercontent.com/vazgriz/SimpleNails/master/Assets/Models/Nail.glb', (gltf) => {
       nailModel = gltf.scene;
-      
-      // 调整模型原始姿态，确保它能对齐手指
       nailModel.rotation.set(0, 0, 0); 
-      nailModel.scale.setScalar(0.01); // 模型可能很大，缩小它
-      
-      // 移除占位符
       nailGroup.clear();
       nailGroup.add(nailModel);
-      log('Real Model Loaded');
-    }, undefined, (error) => {
-        log('Model Load Error: ' + error);
+      log('Nail Model Loaded');
     });
 
-    // 初始保留一个精致占位符，直到真实模型加载完成
-    const placeholderGeometry = new THREE.CylinderGeometry(0.012, 0.01, 0.04, 32);
-    const placeholderMaterial = new THREE.MeshPhongMaterial({ 
-        color: 0xff69b4, 
-        shininess: 100,
-        specular: 0x222222 
-    }); 
-    const placeholderMesh = new THREE.Mesh(placeholderGeometry, placeholderMaterial);
-    placeholderMesh.rotation.x = Math.PI / 2;
-    nailGroup.add(placeholderMesh);
-    nailGroup.visible = false;
-
     function onResults(results) {
-      if (results.multiHandLandmarks) {
-          log(`Hands: ${results.multiHandLandmarks.length}`);
-      }
-
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const landmarks = results.multiHandLandmarks[0];
         const tip = landmarks[8];
@@ -115,7 +104,6 @@
 
         let x = (nailCenterX * 2 - 1);
         let y = -(nailCenterY * 2 - 1 + manualYDown);
-
         if (facingMode === 'user') x = -x; 
 
         const actualAspect = canvasElement.clientWidth / canvasElement.clientHeight;
@@ -126,8 +114,19 @@
         let angle = Math.atan2(dy, (facingMode === 'user') ? -dx : dx);
         nailGroup.rotation.z = -angle - Math.PI/2;
 
+        // --- FITTING LOGIC ---
         const handSize = Math.sqrt(Math.pow(landmarks[0].x - landmarks[9].x, 2) + Math.pow(landmarks[0].y - landmarks[9].y, 2));
-        nailGroup.scale.setScalar(handSize * 2);
+        const userWidth = parseFloat(widthSlider.value);
+        const userLength = parseFloat(lengthSlider.value);
+
+        // 基础缩放系数根据模型实际比例微调
+        const baseScale = handSize * 0.015; 
+        nailGroup.scale.set(
+            baseScale * userWidth, 
+            baseScale * userLength, 
+            baseScale * userWidth
+        );
+
         nailGroup.visible = true;
       } else {
         nailGroup.visible = false;
@@ -153,7 +152,6 @@
 
             log('Starting Camera...');
             const CameraClass = window.Camera || (window.mpCamera && window.mpCamera.Camera);
-            
             cameraInstance = new CameraClass(videoElement, {
                 onFrame: async () => {
                     if (handsInstance) await handsInstance.send({image: videoElement});
@@ -162,7 +160,6 @@
                 width: 640,
                 height: 480
             });
-
             await cameraInstance.start();
             log('AR Ready.');
         } catch (err) {
