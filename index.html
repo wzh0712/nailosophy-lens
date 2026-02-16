@@ -71,15 +71,14 @@
         const tip = landmarks[8];
         const dip = landmarks[7];
 
-        // 进一步加大 offsetRatio。
-        // 1.0 代表完全对齐到 7 号点（关节），我们设为 1.2 尝试推向指甲根部。
-        const offsetRatio = 1.2;
+        // 稍微回调一点，找个平衡点
+        // 从 1.2 回调到 0.85，并减小强制下沉量
+        const offsetRatio = 0.85;
         const nailCenterX = tip.x + (dip.x - tip.x) * offsetRatio;
         const nailCenterY = tip.y + (dip.y - tip.y) * offsetRatio;
 
-        // 既然 offsetRatio 已经很大，我们在这里再加一个垂直下沉量 (MediaPipe Y 向下)
-        // 0.05 约等于一个指甲盖的物理距离
-        const manualYDown = 0.05;
+        // 强制下沉量从 0.05 减小到 0.02
+        const manualYDown = 0.02;
 
         let x = (nailCenterX * 2 - 1);
         let y = -(nailCenterY * 2 - 1 + manualYDown);
